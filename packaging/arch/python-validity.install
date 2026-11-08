@@ -1,0 +1,21 @@
+post_install() {
+    systemctl daemon-reload
+    # No udev trigger here: that would start the driver before its firmware is downloaded,
+    # and it would crash-loop into systemd's start limit. setup.sh starts it after the firmware.
+    udevadm control --reload-rules
+    echo "  -> First time? Run packaging/arch/setup.sh (firmware, services, enrolling a finger)."
+}
+
+post_upgrade() {
+    systemctl daemon-reload
+    udevadm control --reload-rules
+    systemctl try-restart python3-validity.service
+}
+
+pre_remove() {
+    systemctl disable --now python3-validity.service python3-validity-suspend-hotfix.service 2>/dev/null || true
+}
+
+post_remove() {
+    systemctl daemon-reload
+}

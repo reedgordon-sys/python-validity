@@ -1,0 +1,17 @@
+# From the AUR python-validity package: the reader often stops answering after sleep,
+# so restart the driver and open-fprintd every time the laptop wakes up.
+[Unit]
+After=hibernate.target
+After=hybrid-sleep.target
+After=suspend.target
+After=suspend-then-hibernate.target
+
+[Service]
+Type=simple
+ExecStart=/bin/systemctl --no-block restart python3-validity.service open-fprintd.service
+
+[Install]
+WantedBy=hibernate.target
+WantedBy=hybrid-sleep.target
+WantedBy=suspend.target
+WantedBy=suspend-then-hibernate.target

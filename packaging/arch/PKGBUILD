@@ -1,0 +1,71 @@
+# Maintainer: reedg
+#
+# Personal build of python-validity, the driver for Synaptics/Validity fingerprint readers
+# 138a:0090, 138a:0097 and 06cb:009a (the ThinkPad X1 Yoga 3rd gen has 06cb:009a).
+# Builds straight from this checkout, uncommitted edits included. Nothing is downloaded here;
+# the reader's firmware comes from Lenovo at setup time (validity-sensors-firmware).
+#
+#   Normal use:  packaging/arch/setup.sh     (build, install, firmware, services, enroll)
+#   By hand:     cd packaging/arch && makepkg -si
+#
+# Files are installed directly (mirroring setup.py) rather than with `setup.py install`,
+# which current setuptools no longer supports. After a Python minor-version upgrade
+# (e.g. 3.14 -> 3.15) re-run setup.sh so the module lands in the new site-packages.
+#
+# Version = setup.py version + git commit count + short hash, e.g. 0.15.r212.ga6bbc21.
+
+_repo=$(realpath "$(dirname "${BASH_SOURCE[0]}")/../..")
+_ver=$(sed -n "s/.*version='\([^']*\)'.*/\1/p" "$_repo/setup.py")
+
+pkgname=python-validity-reedg
+if _count=$(git -C "$_repo" rev-list --count HEAD 2>/dev/null); then
+  pkgver="${_ver:-0}.r${_count}.g$(git -C "$_repo" rev-parse --short HEAD)"
+else
+  pkgver="${_ver:-0}"
+fi
+pkgrel=1
+pkgdesc="Validity/Synaptics fingerprint reader driver (reedg's fork of python-validity)"
+arch=('any')
+url="https://github.com/reedgordon-sys/python-validity"
+license=('MIT')
+depends=(
+  python python-yaml python-pyusb python-cryptography python-dbus python-gobject glib2
+  innoextract                 # validity-sensors-firmware unpacks Lenovo's driver
+  'open-fprintd>=0.6'         # AUR: fprintd-compatible D-Bus service (KDE, PAM talk to it)
+  fprintd-clients             # AUR: fprintd-enroll/list + pam_fprintd.so
+)
+provides=("python-validity=${_ver:-0}")
+conflicts=(python-validity)
+backup=(etc/python-validity/dbus-service.yaml)
+install=python-validity.install
+options=('!strip' '!debug')
+
+package() {
+  cd "$_repo"
+  local site
+  site=$(python -c 'import sysconfig; print(sysconfig.get_path("purelib", vars={"base": "/usr"}))')
+
+  # setup.py: packages=['validitysensor']
+  install -Dm644 -t "$pkgdir$site/validitysensor" validitysensor/*.py
+  python -m compileall -q -o 0 -o 1 -s "$pkgdir" -p / "$pkgdir$site/validitysensor"
+
+  # setup.py: scripts=
+  install -Dm755 -t "$pkgdir/usr/bin" bin/validity-led-dance bin/validity-sensors-firmware
+
+  # setup.py: data_files=
+  install -Dm644 -t "$pkgdir/usr/share/dbus-1/system.d" dbus_service/io.github.uunicorn.Fprint.conf
+  install -Dm755 -t "$pkgdir/usr/lib/python-validity" dbus_service/dbus-service
+  install -Dm644 -t "$pkgdir/usr/share/python-validity/playground" \
+    scripts/dbus-cmd.py scripts/lsdbus.py scripts/factory-reset.py scripts/prototype.py
+
+  # Debian ships this; the service also works without it (user -> Windows SID mapping).
+  install -Dm644 -t "$pkgdir/etc/python-validity" etc/python-validity/dbus-service.yaml
+
+  # systemd + udev (same as the AUR package: restart on failure, restart after sleep)
+  install -Dm644 -t "$pkgdir/usr/lib/systemd/system" debian/python3-validity.service \
+    packaging/arch/python3-validity-suspend-hotfix.service
+  sed -i 's/^Restart=.*/Restart=on-failure/' "$pkgdir/usr/lib/systemd/system/python3-validity.service"
+  install -Dm644 debian/python3-validity.udev "$pkgdir/usr/lib/udev/rules.d/60-python-validity.rules"
+
+  install -Dm644 -t "$pkgdir/usr/share/licenses/$pkgname" LICENSE
+}
