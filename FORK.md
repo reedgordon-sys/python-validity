@@ -28,8 +28,23 @@ clears it; a reboot always does. (`setup.sh` uses `systemctl start`, never `rest
 
 - `validity-sensors-firmware` creates `/run/python-validity/` before copying the firmware there. `/run` is emptied
   at boot, so on a fresh boot the copy failed if the driver hadn't run yet.
+- `dbus-service` uses `GLibUnix.signal_add` (falls back to the deprecated `GLib.unix_signal_add` on older GLib),
+  so a future PyGObject that drops the old name won't stop the driver from starting.
 - `packaging/arch/`: Arch package that installs the files directly (current setuptools no longer supports
-  `setup.py install`), restarts the driver after sleep, and a one-command setup script.
+  `setup.py install`), restarts the driver after sleep, warns after a Python upgrade, and a one-command setup script.
+
+## Keeping it working
+
+Nobody upstream updates this, so these are the things that can break it and what's in place:
+
+| What changes | What happens | What to do |
+|---|---|---|
+| Python minor upgrade (3.14 → 3.15, about once a year) | Driver and `open-fprintd` stop loading | pacman prints a **"!! Python is now 3.x"** warning right after the upgrade. Run `setup.sh` and `yay -S --rebuild open-fprintd` |
+| Lenovo removes the firmware download | Only matters after a factory reset | `setup.sh` keeps a private copy in `~/.local/share/python-validity-firmware/` (checked against the SHA-512 in `firmware_tables.py`) and uses it automatically. Back that folder up with the rest of your home folder |
+| PyGObject drops deprecated names | Driver: already fixed. `open-fprintd` still uses `GObject.MainLoop` (warning in the journal) | If `open-fprintd` stops starting, fork it the same way (one-line fix: `GLib.MainLoop`) |
+| Finger stops working after sleep | The suspend hotfix restarts the driver on wake | `sudo systemctl restart python3-validity` once the laptop is idle; if it times out, reboot |
+
+Quick health check: `fprintd-list $USER` should list your finger. `journalctl -u python3-validity -b` shows the driver's log since boot.
 
 ## Git workflow
 

@@ -1,0 +1,20 @@
+#!/bin/sh
+# Run by pacman after the `python` package is upgraded (python-validity-reedg.hook).
+# On a new Python minor version (3.14 -> 3.15), packages that pacman did not rebuild still
+# have their files under the old /usr/lib/python3.X and stop loading. That includes this
+# fingerprint driver and the AUR package open-fprintd, so say so loudly.
+cur=$(python3 -c 'import sys; print("python%d.%d" % sys.version_info[:2])') || exit 0
+stale=$(for d in /usr/lib/python3.*/; do
+            [ -d "$d" ] || continue
+            [ "$(basename "$d")" = "$cur" ] && continue
+            pacman -Qoq "$d" 2>/dev/null
+        done | sort -u)
+[ -n "$stale" ] || exit 0
+echo ""
+echo "  !! Python is now ${cur#python}, but these packages were built for an older Python and"
+echo "  !! will not load until they are rebuilt:"
+echo "$stale" | sed 's/^/       - /'
+echo "  !! Fingerprint reader:  ~/src/python-validity/packaging/arch/setup.sh"
+echo "  !! AUR packages:        yay -S --rebuild <name>      (e.g. open-fprintd)"
+echo ""
+exit 0

@@ -34,7 +34,46 @@ wait_for_reader() {
     for _ in $(seq 20); do reader_up && return 0; sleep 1; done
     return 1
 }
-fetch_firmware() { sudo validity-sensors-firmware 2>&1 | indent; }
+# Private backup of Lenovo's driver download, in case Lenovo ever removes it (it's only needed again
+# after a factory reset, but without it a reset would leave the reader dead). Never put it in git:
+# it's Lenovo's file. validity-sensors-firmware checks its SHA-512 either way.
+FW_BACKUP_DIR="$HOME/.local/share/python-validity-firmware"
+fw_info() {   # prints "<url> <sha512>" for the reader in this machine, from the driver's own table
+    (cd "$HERE/../.." && PYTHONDONTWRITEBYTECODE=1 python3 -c '
+import sys; sys.path.insert(0, ".")
+import usb.core
+from validitysensor.usb import SupportedDevices
+from validitysensor.firmware_tables import FIRMWARE_URIS
+for d in SupportedDevices:
+    if usb.core.find(idVendor=d.value[0], idProduct=d.value[1]):
+        print(FIRMWARE_URIS[d]["driver"], FIRMWARE_URIS[d]["sha512"]); break')
+}
+fw_backup_file() {   # prints the backup's path if it exists and matches the expected SHA-512
+    local url sha f
+    read -r url sha < <(fw_info) || return 1
+    f="$FW_BACKUP_DIR/$(basename "$url")"
+    [[ -f $f ]] && [[ $(sha512sum "$f" | cut -d' ' -f1) == "$sha" ]] && echo "$f"
+}
+ensure_fw_backup() {
+    local url sha f
+    if f=$(fw_backup_file); then ok "firmware backup present ($f)"; return; fi
+    read -r url sha < <(fw_info) || { warn "couldn't identify the reader, so no firmware backup"; return; }
+    f="$FW_BACKUP_DIR/$(basename "$url")"
+    mkdir -p "$FW_BACKUP_DIR"
+    if curl -fsSL --max-time 120 -o "$f.part" "$url" && [[ $(sha512sum "$f.part" | cut -d' ' -f1) == "$sha" ]]; then
+        mv "$f.part" "$f"; ok "backed up Lenovo's firmware download to $f"
+    else
+        rm -f "$f.part"; warn "couldn't back up the firmware from Lenovo (download failed or didn't match)"
+    fi
+}
+fetch_firmware() {   # uses the private backup when there is one, otherwise downloads from Lenovo
+    local f
+    if f=$(fw_backup_file); then
+        sudo validity-sensors-firmware --driver-uri "file://$f" 2>&1 | indent
+    else
+        sudo validity-sensors-firmware 2>&1 | indent
+    fi
+}
 # `start`, never `restart`: killing the driver mid-handshake leaves the reader stuck
 # (every later start times out on its first command until a USB reset or a reboot).
 start_services() {
@@ -82,11 +121,12 @@ sudo pacman -U --noconfirm "$pkgfile" | indent
 # validity-sensors-firmware keeps its copy in /run (emptied at boot), so fetch it only when the
 # reader isn't already working.
 say "Reader firmware"
+ensure_fw_backup
 if reader_up; then
     ok "reader already working (firmware is on it)"
 else
     fetch_firmware
-    ok "downloaded from Lenovo"
+    ok "firmware ready"
 fi
 
 # ---------------------------------------------------------------- 4. services

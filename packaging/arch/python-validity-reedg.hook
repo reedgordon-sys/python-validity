@@ -1,0 +1,9 @@
+[Trigger]
+Operation = Upgrade
+Type = Package
+Target = python
+
+[Action]
+Description = Checking for packages left on the old Python (fingerprint driver)...
+When = PostTransaction
+Exec = /usr/share/python-validity/check-python-upgrade

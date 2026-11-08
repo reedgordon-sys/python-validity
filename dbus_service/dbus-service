@@ -19,6 +19,11 @@ import dbus.mainloop.glib
 import dbus.service
 import yaml
 from gi.repository import GLib
+try:  # GLib >= 2.80 moved the Unix helpers here; GLib.unix_signal_add is deprecated
+    from gi.repository import GLibUnix
+    unix_signal_add = GLibUnix.signal_add
+except ImportError:
+    unix_signal_add = GLib.unix_signal_add
 from usb import core as usb_core
 
 from validitysensor import init
@@ -292,8 +297,8 @@ def main():
         logging.info('Caught signal %d. Stopping...' % x)
         loop.quit()
 
-    GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGINT, die, signal.SIGINT)
-    GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGTERM, die, signal.SIGINT)
+    unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGINT, die, signal.SIGINT)
+    unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGTERM, die, signal.SIGINT)
     try:
         loop.run()
     except Exception as e:

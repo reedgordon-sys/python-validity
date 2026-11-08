@@ -58,6 +58,10 @@ package() {
   install -Dm644 -t "$pkgdir/usr/share/python-validity/playground" \
     scripts/dbus-cmd.py scripts/lsdbus.py scripts/factory-reset.py scripts/prototype.py
 
+  # Warn after a Python minor-version upgrade that this (and open-fprintd) needs a rebuild.
+  install -Dm755 packaging/arch/check-python-upgrade "$pkgdir/usr/share/python-validity/check-python-upgrade"
+  install -Dm644 packaging/arch/python-validity-reedg.hook "$pkgdir/usr/share/libalpm/hooks/python-validity-reedg.hook"
+
   # Debian ships this; the service also works without it (user -> Windows SID mapping).
   install -Dm644 -t "$pkgdir/etc/python-validity" etc/python-validity/dbus-service.yaml
 
