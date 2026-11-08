@@ -20,6 +20,10 @@ Re-run it after editing the driver: it rebuilds, reinstalls and restarts.
 
 After a Python minor-version upgrade (e.g. 3.14 → 3.15), re-run it so the driver lands in the new `site-packages`.
 
+**Gotcha: never restart the driver while it's starting up.** Killing it mid-handshake leaves the reader stuck:
+every later start fails with `USBTimeoutError: Operation timed out` on its first command. A USB reset sometimes
+clears it; a reboot always does. (`setup.sh` uses `systemctl start`, never `restart`, and tries a USB reset first.)
+
 ## Changes from upstream
 
 - `validity-sensors-firmware` creates `/run/python-validity/` before copying the firmware there. `/run` is emptied

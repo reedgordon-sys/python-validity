@@ -35,15 +35,34 @@ wait_for_reader() {
     return 1
 }
 fetch_firmware() { sudo validity-sensors-firmware 2>&1 | indent; }
+# `start`, never `restart`: killing the driver mid-handshake leaves the reader stuck
+# (every later start times out on its first command until a USB reset or a reboot).
 start_services() {
     sudo systemctl reset-failed python3-validity.service open-fprintd.service 2>/dev/null || true
-    sudo systemctl restart open-fprintd.service python3-validity.service
+    sudo systemctl start open-fprintd.service python3-validity.service
 }
+# Un-stick the reader: stop the driver, reset the reader's USB port, start the driver again.
+usb_reset() {
+    sudo systemctl stop python3-validity.service
+    sudo python3 - <<'PY' 2>&1 | indent || true
+import usb.core
+for vid, pid in ((0x06cb, 0x009a), (0x138a, 0x0097), (0x138a, 0x0090)):
+    d = usb.core.find(idVendor=vid, idProduct=pid)
+    if d:
+        d.reset()
+        print("reset USB device %04x:%04x" % (vid, pid))
+PY
+    sleep 2
+    start_services
+}
+# Driver log since $LOG_SINCE (set before each attempt), so old errors don't count.
+LOG_SINCE="-1min"
+driver_log() { sudo journalctl -u python3-validity.service --since "$LOG_SINCE" -n "${1:-15}" --no-pager | indent; }
 
 # ---------------------------------------------------------------- 1. AUR pieces
 say "AUR pieces (open-fprintd, fprintd-clients)"
-missing=()
-for p in open-fprintd fprintd-clients; do pacman -Qq "$p" &>/dev/null || missing+=("$p"); done
+# pacman -T also counts packages that *provide* these names (yay installs fprintd-clients-git).
+mapfile -t missing < <(pacman -T open-fprintd fprintd-clients || true)
 if ((${#missing[@]})); then yay -S --needed --noconfirm "${missing[@]}"; fi
 ok "installed"
 
@@ -78,17 +97,29 @@ start_services
 if wait_for_reader; then
     ok "reader is up"
 else
-    warn "the reader didn't come up. Last driver log lines:"
-    sudo journalctl -u python3-validity.service -n 15 --no-pager | indent
-    echo "    On first setup a factory reset of the reader's chip usually fixes this."
-    echo "    It erases fingerprints stored on the chip (e.g. ones Windows enrolled)."
-    ask "Factory-reset the reader now?" || die "stopped. Re-run this script when you're ready."
-    sudo systemctl stop python3-validity.service
-    sudo python3 /usr/share/python-validity/playground/factory-reset.py 2>&1 | indent
-    fetch_firmware     # a reset wipes the firmware too
-    start_services
-    wait_for_reader || { sudo journalctl -u python3-validity.service -n 25 --no-pager | indent; die "the reader still didn't come up (log above)."; }
-    ok "reader is up after the reset"
+    warn "the reader didn't come up; resetting its USB connection and trying again"
+    LOG_SINCE=$(date '+%Y-%m-%d %H:%M:%S')
+    usb_reset
+    if wait_for_reader; then
+        ok "reader is up after a USB reset"
+    elif grep -q 'Operation timed out' <<<"$(driver_log 40)"; then
+        driver_log
+        die "the reader is stuck (USB timeouts above). Reboot, then run this script again."
+    else
+        warn "the reader still didn't come up. Last driver log lines:"
+        driver_log
+        echo "    On first setup a factory reset of the reader's chip usually fixes this."
+        echo "    It erases fingerprints stored on the chip (e.g. ones Windows enrolled)."
+        ask "Factory-reset the reader now?" || die "stopped. Re-run this script when you're ready."
+        sudo systemctl stop python3-validity.service
+        if ! sudo python3 /usr/share/python-validity/playground/factory-reset.py 2>&1 | indent; then
+            die "the factory reset failed (output above). Reboot, then run this script again."
+        fi
+        fetch_firmware     # a reset wipes the firmware too
+        start_services
+        wait_for_reader || { driver_log 25; die "the reader still didn't come up (log above)."; }
+        ok "reader is up after the reset"
+    fi
 fi
 
 # ---------------------------------------------------------------- 5. enroll
